@@ -4,6 +4,9 @@ import whisper
 import subprocess
 import json
 import warnings
+from dotenv import load_dotenv
+from pyannote.audio import Pipeline
+from pydub.utils import mediainfo
 
 def is_supported_by_ffmpeg(file_path):
     """Check if the file format is supported by ffmpeg."""
@@ -34,9 +37,66 @@ def prepare_output_directory(audio_file):
     os.makedirs(output_dir, exist_ok=True)
     return output_dir
 
+def perform_diarization(audio_file):
+    token = os.getenv("HUGGINGFACE_TOKEN")
+    if not token:
+        print("\033[91m[ERROR]\033[0m Hugging Face token not found. Please set it in the .env file or environment variables.")
+        sys.exit(1)
+
+    """Perform speaker diarization using pyannote.audio."""
+    print("\033[94m[INFO]\033[0m Loading diarization model...")
+    
+    pipeline = Pipeline.from_pretrained(
+        "pyannote/speaker-diarization-3.1",
+        use_auth_token=token
+    )
+    duration = get_audio_duration(audio_file)
+
+    print(f"\033[94m[INFO]\033[0m Starting diarization...\n estimated duration: {duration:.2f} seconds")
+    diarization = pipeline(audio_file, min_speakers=2, max_speakers=5)
+
+    speaker_segments = []
+    for turn, _, speaker in diarization.itertracks(yield_label=True):
+        speaker_segments.append({
+            "start": turn.start,
+            "end": turn.end,
+            "speaker": speaker
+        })
+
+
+    return speaker_segments
+
+
+def get_audio_duration(audio_file):
+    """Retrieve the duration of the audio file in seconds."""
+    info = mediainfo(audio_file)
+    return float(info['duration'])
+
+def merge_diarization_with_transcription(speaker_segments, transcription_segments):
+    """Combine diarization and transcription results."""
+    combined_results = []
+    for segment in transcription_segments:
+        start = segment['start']
+        end = segment['end']
+        text = segment['text']
+
+        speaker = "Unknown"
+        for speaker_segment in speaker_segments:
+            if speaker_segment['start'] <= start <= speaker_segment['end']:
+                speaker = speaker_segment['speaker']
+                break
+
+        combined_results.append({
+            "start": start,
+            "end": end,
+            "speaker": speaker,
+            "text": text
+        })
+
+    return combined_results
+
 def transcribe_audio(audio_file, output_dir, debug=False):
     """Perform transcription using Whisper and save results in multiple formats."""
-    
     print("\033[94m[INFO]\033[0m Loading Whisper model: \033[1mmedium\033[0m")
     if debug:
         model = whisper.load_model("medium")
@@ -52,36 +112,42 @@ def transcribe_audio(audio_file, output_dir, debug=False):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")  # Suppress warnings
             result = model.transcribe(audio_file, language="de", verbose=False)
+    transcription_segments = result['segments']
 
-    # Save text transcription
+    return transcription_segments
+
+def save_combined_results(output_dir, combined_results):
+    """Save combined transcription and diarization results to various formats."""
+    # Save combined results to JSON
+    output_json_file = os.path.join(output_dir, "combined_transcription.json")
+    with open(output_json_file, "w", encoding="utf-8") as f:
+        json.dump(combined_results, f, ensure_ascii=False, indent=4)
+
+    # Save to TXT format
     output_text_file = os.path.join(output_dir, "transcription.txt")
     with open(output_text_file, "w", encoding="utf-8") as f:
-        f.write(result["text"])
+        for entry in combined_results:
+            f.write(f"Speaker {entry['speaker']}: {entry['text']}\n")
 
-    # Save JSON format
-    output_json_file = os.path.join(output_dir, "transcription.json")
-    with open(output_json_file, "w", encoding="utf-8") as f:
-        json.dump(result, f, ensure_ascii=False, indent=4)
-
-    # Save SRT file
+    # Save to SRT format
     output_srt_file = os.path.join(output_dir, "transcription.srt")
     with open(output_srt_file, "w", encoding="utf-8") as f:
-        for i, segment in enumerate(result['segments']):
+        for i, entry in enumerate(combined_results):
             f.write(f"{i + 1}\n")
-            f.write(f"{segment['start']:.3f} --> {segment['end']:.3f}\n")
-            f.write(f"{segment['text']}\n\n")
+            f.write(f"{entry['start']:.3f} --> {entry['end']:.3f}\n")
+            f.write(f"Speaker {entry['speaker']}: {entry['text']}\n\n")
 
-    # Save VTT file
+    # Save to VTT format
     output_vtt_file = os.path.join(output_dir, "transcription.vtt")
     with open(output_vtt_file, "w", encoding="utf-8") as f:
         f.write("WEBVTT\n\n")
-        for segment in result['segments']:
-            f.write(f"{segment['start']:.3f} --> {segment['end']:.3f}\n")
-            f.write(f"{segment['text']}\n\n")
-
-    print(f"\033[92m[SUCCESS]\033[0m Transcription saved successfully in \033[1m{output_dir}\033[0m")
+        for entry in combined_results:
+            f.write(f"{entry['start']:.3f} --> {entry['end']:.3f}\n")
+            f.write(f"Speaker {entry['speaker']}: {entry['text']}\n\n")
 
 def main():
+    load_dotenv()
+
     # Check if filename is passed as an argument
     if len(sys.argv) < 2:
         print("\033[91m[ERROR]\033[0m Please provide the audio file name as an argument.")
@@ -105,13 +171,22 @@ def main():
 
     # Prepare output directory
     output_dir = prepare_output_directory(audio_file)
-    
+
     print("\033[95m========================================\033[0m")
     print("\033[95m        STARTING AUDIO TRANSCRIPTION        \033[0m")
     print("\033[95m========================================\033[0m")
 
+    # Perform diarization
+    speaker_segments = perform_diarization(audio_file)
+
     # Perform transcription
-    transcribe_audio(audio_file, output_dir, debug=debug)
+    transcription_segments = transcribe_audio(audio_file, output_dir, debug=debug)
+
+    # Merge results
+    combined_results = merge_diarization_with_transcription(speaker_segments, transcription_segments)
+
+    # Save combined results
+    save_combined_results(output_dir, combined_results)
 
     print("\033[95m========================================\033[0m")
     print("\033[95m          AUDIO TRANSCRIPTION DONE          \033[0m")
