@@ -7,6 +7,7 @@ import warnings
 from dotenv import load_dotenv
 from pyannote.audio import Pipeline
 from pydub.utils import mediainfo
+from pyannote.audio.pipelines.utils.hook import ProgressHook
 
 def is_supported_by_ffmpeg(file_path):
     """Check if the file format is supported by ffmpeg."""
@@ -37,7 +38,7 @@ def prepare_output_directory(audio_file):
     os.makedirs(output_dir, exist_ok=True)
     return output_dir
 
-def perform_diarization(audio_file):
+def perform_diarization(audio_file, debug = False):
     token = os.getenv("HUGGINGFACE_TOKEN")
     if not token:
         print("\033[91m[ERROR]\033[0m Hugging Face token not found. Please set it in the .env file or environment variables.")
@@ -50,10 +51,16 @@ def perform_diarization(audio_file):
         "pyannote/speaker-diarization-3.1",
         use_auth_token=token
     )
-    duration = get_audio_duration(audio_file)
 
-    print(f"\033[94m[INFO]\033[0m Starting diarization...\n estimated duration: {duration:.2f} seconds")
-    diarization = pipeline(audio_file, min_speakers=2, max_speakers=5)
+    print(f"\033[94m[INFO]\033[0m Starting diarization...")
+    with ProgressHook() as hook:
+        if debug:
+            diarization = pipeline(audio_file, hook=hook, min_speakers=2, max_speakers=5)
+        else:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")  # Suppress warnings
+                diarization = pipeline(audio_file, hook=hook, min_speakers=2, max_speakers=5)
+        
 
     speaker_segments = []
     for turn, _, speaker in diarization.itertracks(yield_label=True):
@@ -63,14 +70,8 @@ def perform_diarization(audio_file):
             "speaker": speaker
         })
 
-
     return speaker_segments
 
-
-def get_audio_duration(audio_file):
-    """Retrieve the duration of the audio file in seconds."""
-    info = mediainfo(audio_file)
-    return float(info['duration'])
 
 def merge_diarization_with_transcription(speaker_segments, transcription_segments):
     """Combine diarization and transcription results."""
@@ -145,7 +146,7 @@ def save_combined_results(output_dir, combined_results):
             f.write(f"{entry['start']:.3f} --> {entry['end']:.3f}\n")
             f.write(f"Speaker {entry['speaker']}: {entry['text']}\n\n")
 
-def main():
+def main(): 
     load_dotenv()
 
     # Check if filename is passed as an argument
@@ -177,7 +178,7 @@ def main():
     print("\033[95m========================================\033[0m")
 
     # Perform diarization
-    speaker_segments = perform_diarization(audio_file)
+    speaker_segments = perform_diarization(audio_file, debug=debug)
 
     # Perform transcription
     transcription_segments = transcribe_audio(audio_file, output_dir, debug=debug)
