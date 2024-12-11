@@ -40,14 +40,14 @@ This is an open-source Python tool for transcribing audio files using [OpenAI Wh
 ## Usage
 Run the script with the following command:
 ```bash
-python script.py <audio_file> [--debug]
+python transcriber.py <audio_file> [--debug]
 ```
 - `<audio_file>`: Path to the audio file to be transcribed.
 - `--debug` (optional): Enables debug mode to show warnings and detailed output.
 
 ### Example:
 ```bash
-python script.py example.mp3 --debug
+python transcriber.py example.mp3 --debug
 ```
 
 ## Output
