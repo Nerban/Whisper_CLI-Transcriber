@@ -6,7 +6,6 @@ import json
 import warnings
 from dotenv import load_dotenv
 from pyannote.audio import Pipeline
-from pydub.utils import mediainfo
 from pyannote.audio.pipelines.utils.hook import ProgressHook
 
 def is_supported_by_ffmpeg(file_path):
@@ -72,6 +71,26 @@ def perform_diarization(audio_file, debug = False):
 
     return speaker_segments
 
+def transcribe_audio(audio_file, debug=False):
+    """Perform transcription using Whisper and save results in multiple formats."""
+    print("\033[94m[INFO]\033[0m Loading Whisper model: \033[1mmedium\033[0m")
+    if debug:
+        model = whisper.load_model("medium")
+    else:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")  # Suppress warnings
+            model = whisper.load_model("medium")
+
+    print("\033[94m[INFO]\033[0m Starting transcription...")
+    if debug:
+        result = model.transcribe(audio_file, language="de", verbose=False)
+    else:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")  # Suppress warnings
+            result = model.transcribe(audio_file, language="de", verbose=False)
+    transcription_segments = result['segments']
+
+    return transcription_segments
 
 def merge_diarization_with_transcription(speaker_segments, transcription_segments):
     """Combine diarization and transcription results."""
@@ -95,27 +114,6 @@ def merge_diarization_with_transcription(speaker_segments, transcription_segment
         })
 
     return combined_results
-
-def transcribe_audio(audio_file, output_dir, debug=False):
-    """Perform transcription using Whisper and save results in multiple formats."""
-    print("\033[94m[INFO]\033[0m Loading Whisper model: \033[1mmedium\033[0m")
-    if debug:
-        model = whisper.load_model("medium")
-    else:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")  # Suppress warnings
-            model = whisper.load_model("medium")
-
-    print("\033[94m[INFO]\033[0m Starting transcription...")
-    if debug:
-        result = model.transcribe(audio_file, language="de", verbose=False)
-    else:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")  # Suppress warnings
-            result = model.transcribe(audio_file, language="de", verbose=False)
-    transcription_segments = result['segments']
-
-    return transcription_segments
 
 def save_combined_results(output_dir, combined_results):
     """Save combined transcription and diarization results to various formats."""
@@ -149,6 +147,8 @@ def save_combined_results(output_dir, combined_results):
 def main(): 
     load_dotenv()
 
+    # Debug flag
+    debug = "--debug" in sys.argv
     # Check if filename is passed as an argument
     if len(sys.argv) < 2:
         print("\033[91m[ERROR]\033[0m Please provide the audio file name as an argument.")
@@ -167,8 +167,7 @@ def main():
         print(f"\033[91m[ERROR]\033[0m The file \033[1m{audio_file}\033[0m is not supported by ffmpeg or is not a valid audio file.")
         sys.exit(1)
 
-    # Debug flag
-    debug = "--debug" in sys.argv or "--Debug" in sys.argv
+
 
     # Prepare output directory
     output_dir = prepare_output_directory(audio_file)
@@ -181,7 +180,7 @@ def main():
     speaker_segments = perform_diarization(audio_file, debug=debug)
 
     # Perform transcription
-    transcription_segments = transcribe_audio(audio_file, output_dir, debug=debug)
+    transcription_segments = transcribe_audio(audio_file, debug=debug)
 
     # Merge results
     combined_results = merge_diarization_with_transcription(speaker_segments, transcription_segments)
